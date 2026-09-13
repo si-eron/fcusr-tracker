@@ -1603,6 +1603,58 @@ function makeDevice(server, name) {
       P4.w.U.isUuid(P4.S.task(dir.id).unitId), P4.S.task(dir.id).unitId);
   }
 
+  /* ---------------- one bad row is not everybody's problem ----------------
+     Skipping a refused row only ever covered permission. A row refused for any
+     other reason — a foreign key pointing at nothing, a duplicate, a value out
+     of range — still took the whole round down and every record that would
+     otherwise have gone with it.
+
+     What a council saw was "Not synced", nothing sent, and a term's work stuck
+     behind one directive with a bad unit on it. */
+  console.log('\n--- a row the server will never take is set aside ---');
+  {
+    const sBad = makeServer();
+    const D5 = makeDevice(sBad, 'President');
+    const unit = D5.S.nationalUnitId();
+
+    const ok1 = D5.S.addEvent({ title: 'Good activity', unitId: unit });
+    await D5.Sync.now();
+
+    // A record the server rejects for a reason that is not permission, and
+    // never will accept however many times it is offered.
+    const bad = D5.S.addEvent({ title: 'Bad activity', unitId: unit });
+    sBad.refuseWrite = null;                 // not a permission problem
+    const realUpsert = sBad.upsert.bind(sBad);
+    sBad.upsert = function (table, rows) {
+      if (table === 'events' && rows.some((r) => r.id === bad.id)) {
+        const e = new Error('insert or update on table "events" violates foreign key constraint');
+        e.status = 409;
+        return Promise.reject(e);
+      }
+      return realUpsert(table, rows);
+    };
+
+    const ok2 = D5.S.addEvent({ title: 'Another good one', unitId: unit });
+
+    const st = await D5.Sync.now();
+    check('the round survives it', !st.error, st.error);
+    check('and the good records still went', !!sBad.tables.events[ok2.id],
+      'one bad row stopped everything else');
+    check('the earlier one is untouched', !!sBad.tables.events[ok1.id]);
+    check('the bad one is counted, not swallowed', st.last && st.last.refused >= 1,
+      st.last && st.last.refused);
+
+    // And it is not re-offered every round for the rest of the term.
+    const before = sBad.requests.length;
+    await D5.Sync.now({ full: true });
+    const offered = sBad.requests.slice(before)
+      .filter((r) => r.op === 'upsert' && r.table === 'events').length;
+    check('and it is not offered again for ever', offered <= 1,
+      offered + ' attempts on a later full round');
+
+    sBad.upsert = realUpsert;
+  }
+
   console.log('\n--- no console errors ---');
   check('device A stayed quiet', A.errors.length === 0, A.errors.slice(0, 2).join(' | '));
   check('device B stayed quiet', B.errors.length === 0, B.errors.slice(0, 2).join(' | '));

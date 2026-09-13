@@ -89,10 +89,13 @@
          this device adopted the server's unit ids carries one of its own, and
          offering that back is a foreign key violation that takes the whole
          round down with it. */
-      var own = rec.unitId && U.isUuid(rec.unitId) ? rec.unitId : '';
+      /* A unit this device can actually vouch for: a uuid, and one it holds a
+         unit record for. Anything else is an id the server has no row for, and
+         offering it is a foreign key violation. */
+      var good = function (v) { return v && U.isUuid(v) && !!Store.unit(v); };
       var mine = (global.Auth && Auth.myUnitId && Auth.myUnitId()) || '';
       row.unit_id = rec.eventId ? null
-        : (own || (U.isUuid(mine) ? mine : null));
+        : (good(rec.unitId) ? rec.unitId : (good(mine) ? mine : null));
       row.title = rec.title || '';
       row.status = rec.status || 'Not Started';
     }
@@ -273,12 +276,27 @@
   /* `keyOf` because not every table is keyed by `id`. Deletions are keyed by the
      pair (entity, entity_id) and have no id column at all, so sending one would
      be refused by the server for a completely different reason. */
+  /* A row the server will never accept, however many times it is offered.
+
+     Permission was the only kind this knew about, so a row refused for any
+     other reason — a foreign key pointing at something that is not there, a
+     duplicate, a column out of range — still took the whole round down with it
+     and every record that would otherwise have gone. A council watched "Not
+     synced" with nothing sent because of one directive.
+
+     4xx means the server has read the row and will not have it; offering it
+     again changes nothing. 5xx and a dead connection are the opposite — those
+     are worth the whole round failing, because they pass. */
+  function permanent(err) {
+    return !!err && err.status >= 400 && err.status < 500;
+  }
+
   function offer(table, rows, keyOf) {
     var name = keyOf || function (r) { return table + ':' + r.id; };
     if (!rows.length) return Promise.resolve(0);
     return Backend.upsert(table, rows).then(function () { return rows.length; })
       .catch(function (err) {
-        if (!err || (err.status !== 401 && err.status !== 403)) throw err;
+        if (!permanent(err)) throw err;
         /* Something in here is not this device's to write, and the answer does
            not say which. Offer them singly to find out, take what is taken, and
            remember the rest so this only happens once. */
@@ -288,9 +306,17 @@
           c = c.then(function () {
             return Backend.upsert(table, [row]).then(function () { taken += 1; })
               .catch(function (e) {
-                if (e && (e.status === 401 || e.status === 403)) {
+                if (permanent(e)) {
                   unwritable[name(row)] = 1;
                   refused += 1;
+                  /* Said once, where somebody can see it. A row set aside for a
+                     reason that is not permission is a fault in the record
+                     rather than in who is holding it, and silence about it is
+                     how one bad row becomes a mystery. */
+                  if (e.status !== 401 && e.status !== 403) {
+                    console.warn('Sync set a record aside: ' + table + ' ' +
+                      name(row) + ' — ' + (e.message || e.status));
+                  }
                   return;
                 }
                 throw e;
@@ -368,7 +394,7 @@
                a deletion that cannot be carried out is not a reason to stop
                carrying out the others. */
             return Backend.remove(table, byTable[table]).catch(function (err) {
-              if (err && (err.status === 401 || err.status === 403)) { refused += 1; return; }
+              if (permanent(err)) { refused += 1; return; }
               throw err;
             });
           });
