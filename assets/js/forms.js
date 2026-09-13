@@ -1190,9 +1190,17 @@
       ? (existing.eventIds || []).concat([e.id]).filter(function (x, i, a) { return a.indexOf(x) === i; })
       : [e.id];
 
+    /* An officer helping at an activity is still an officer. This used to send
+       'volunteer' whoever it was, so an executive who promoted somebody and then
+       put them on an activity sent them quietly back down — and the person found
+       out by signing in to the wrong app. Being enrolled onto an activity adds an
+       activity; it is not a demotion. */
+    var keepsOfficer = !!(existing && existing.access !== 'volunteer');
+    var access = keepsOfficer ? 'officer' : 'volunteer';
+
     if (existing) {
       Store.updatePerson(existing.id, {
-        eventIds: eventIds, access: 'volunteer', active: true,
+        eventIds: eventIds, access: access, active: true,
         position: v.position || existing.position
       });
     } else {
@@ -1204,7 +1212,11 @@
 
     return Backend.enrol({
       email: v.email, full_name: v.name, position: v.position,
-      unit_id: e.unitId, access: 'volunteer', eventIds: eventIds
+      /* An officer keeps the unit they hold office in. Filing them under the
+         activity's unit would move a National officer into a college for the
+         sake of one afternoon's help. */
+      unit_id: keepsOfficer ? (existing.unitId || e.unitId) : e.unitId,
+      access: access, eventIds: eventIds
     }).catch(function (err) {
       // Offline there is no server to record it on. The helper is still on the
       // activity so work can be assigned; the login follows once it is connected.
@@ -2229,6 +2241,27 @@
           : 'Optional. With an address they can sign in and see their own tasks; without one ' +
             'they are simply somebody work can be assigned to.'
       }) +
+
+      /* What this person IS, asked plainly.
+
+         It was never asked. It was implied by whichever form you happened to
+         open: this one always enrolled an officer, the helper form always
+         enrolled a volunteer, and the roster import always enrolled an officer.
+         So moving somebody between the two was not something the app could do —
+         an executive promoting a volunteer changed the account and left the
+         directory saying volunteer, or put them on an activity afterwards and
+         silently sent them back down again. */
+      field({
+        name: 'access', label: 'What they are',
+        control: '<select id="f-access">' +
+          '<option value="officer"' + (d.access !== 'volunteer' ? ' selected' : '') + '>' +
+          'Officer &mdash; their unit\u2019s work</option>' +
+          '<option value="volunteer"' + (d.access === 'volunteer' ? ' selected' : '') + '>' +
+          'Volunteer &mdash; only the activities they are put on</option>' +
+          '</select>',
+        hint: 'An officer of the National government reaches the whole Republic. A volunteer ' +
+          'sees only the activities somebody enrols them into.'
+      }) +
       (isNew ? '' :
         '<div class="field"><label class="checkbox"><input type="checkbox" id="f-active"' + (d.active !== false ? ' checked' : '') + '>' +
         '<span>Active officer<span class="hint">Deactivated officers keep their past tasks but no longer appear in assignee lists.</span></span></label></div>');
@@ -2255,6 +2288,9 @@
           data.email = addr;
           if (!data.name) return showError(root, 'name', 'Enter the officer’s name.');
 
+          var accSel = root.querySelector('#f-access');
+          data.access = accSel && accSel.value === 'volunteer' ? 'volunteer' : 'officer';
+
           if (isNew) Store.addPerson(data);
           else {
             data.active = root.querySelector('#f-active').checked;
@@ -2272,7 +2308,9 @@
           Backend.enrol({
             email: addr, full_name: data.name, position: data.position,
             unit_id: data.unitId || Store.nationalUnitId(),
-            access: 'officer', eventIds: []
+            // What the form was told, not what this form used to assume.
+            access: data.access,
+            eventIds: data.access === 'volunteer' ? (d.eventIds || []) : []
           }).then(function () {
             close();
             invitedDialog(data.name, addr);

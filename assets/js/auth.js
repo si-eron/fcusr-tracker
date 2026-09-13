@@ -200,6 +200,27 @@
     return me;
   }
 
+  /* Ask the server who this person is now, rather than who they were when they
+     signed in.
+
+     An executive moving somebody from volunteer to officer changes the account
+     on the server; the app was only reading it at sign-in, so the person kept
+     the volunteer screens until they thought to close the tab and come back —
+     and nothing on screen suggested they should. Returns true when something
+     that decides what they can see actually changed. */
+  function refresh() {
+    if (isOffline() || !me) return Promise.resolve(false);
+    var was = me.access + '|' + me.unitId + '|' + (me.isHead ? 'head' : '') +
+      '|' + (me.eventIds || []).join(',');
+    return Backend.whoami().then(function (profile) {
+      if (!profile) return false;
+      adopt(profile);
+      var now = me.access + '|' + me.unitId + '|' + (me.isHead ? 'head' : '') +
+        '|' + (me.eventIds || []).join(',');
+      return now !== was;
+    }).catch(function () { return false; });
+  }
+
   function signIn(email, password) {
     if (isOffline()) {
       // No project configured yet: the app runs as it always has, with the
@@ -424,6 +445,7 @@
     myUnitId: myUnitId,
     signIn: signIn, signUp: signUp, signOut: signOut,
     restore: restore, resume: resume, adopt: adopt, settled: settled,
+    refresh: refresh,
     promptSignIn: promptSignIn, requireExecutive: requireExecutive,
     changePassword: changePassword, isOffline: isOffline,
     setMemberPassword: setMemberPassword

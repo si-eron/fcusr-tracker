@@ -777,6 +777,33 @@ console.log('\n--- pictures refused by the browser ---');
     'one failure would keep pictures off until the tab is closed');
 }
 
+/* ---------------- what somebody is, asked once and sent everywhere ----------------
+   It was never asked. Whichever form got opened decided: the person form always
+   enrolled an officer, the helper form always enrolled a volunteer, the roster
+   import always enrolled an officer. Moving somebody between the two was
+   therefore not something the app could do. */
+console.log('\n--- the person form asks what somebody is ---');
+{
+  const src = fs.readFileSync(path.join(ROOT, 'assets/js/forms.js'), 'utf8');
+  check('the form has a choice of officer or volunteer', /id="f-access"/.test(src));
+  check('and what it says is what gets saved here',
+    /data\.access = accSel && accSel\.value === 'volunteer'/.test(src));
+  check('and what gets sent to the server',
+    /access: data\.access/.test(src),
+    'the form still hard-codes what it enrols people as');
+
+  /* Being put on an activity adds an activity. It is not a demotion, and it
+     used to be one: an officer helping out was sent back down to volunteer. */
+  check('helping at an activity does not demote an officer',
+    /var keepsOfficer = !!\(existing && existing\.access !== 'volunteer'\)/.test(src));
+  check('and does not move them into another unit for the afternoon',
+    /keepsOfficer \? \(existing\.unitId \|\| e\.unitId\) : e\.unitId/.test(src));
+
+  const sync = fs.readFileSync(path.join(ROOT, 'assets/js/sync.js'), 'utf8');
+  check('and a change of office is noticed without closing the tab',
+    /Auth\.refresh\(\)/.test(sync));
+}
+
 console.log('\n--- backend wiring ---');
 const Backend = window.Backend;
 check('Supabase is the selected driver', Backend.config.driver === 'supabase');

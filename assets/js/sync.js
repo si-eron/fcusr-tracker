@@ -534,6 +534,16 @@
           pushed: new Date(Date.parse(deviceStart) - 1).toISOString(),
           at: startedAt
         });
+        /* A full round is also when to ask whether this person is still what
+           they were. Somebody promoted from volunteer to officer kept the
+           volunteer screens until they closed the tab, with nothing on screen
+           to suggest they should. */
+        if (full && global.Auth && Auth.refresh) {
+          Auth.refresh().then(function (changed) {
+            if (changed && global.App && App.render) App.render();
+          });
+        }
+
         state.last = {
           added: res.counts.added, updated: res.counts.updated,
           removed: res.counts.removed, sent: sent, at: startedAt, full: full,

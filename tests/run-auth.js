@@ -812,6 +812,68 @@ const FILES = [
     await Auth.signOut();
   }
 
+  /* ---------------- moving somebody between offices ----------------
+     A volunteer made a national officer, which is an ordinary thing a council
+     does and something the app could not do at all.
+
+     What somebody IS was never asked. It was implied by whichever form got
+     opened: the person form always enrolled an officer, the helper form always
+     enrolled a volunteer, the roster import always enrolled an officer. So an
+     executive promoting a volunteer changed the account and left the directory
+     still saying volunteer — and if they then put that person on an activity,
+     the helper form sent them quietly back down to volunteer again. The person
+     found out by signing in to the wrong app. */
+  console.log('\n--- a volunteer made an officer ---');
+  {
+    await Auth.signIn('president@filamer.edu.ph', 'presidentpass');
+    const email = 'helper@filamer.edu.ph';
+
+    await Backend.enrol({
+      email: email, full_name: 'Helper One', position: 'Committee member',
+      unit_id: CN, access: 'volunteer', eventIds: []
+    });
+    check('they start as a volunteer',
+      SB.enrolments[email] && SB.enrolments[email].access === 'volunteer',
+      SB.enrolments[email] && SB.enrolments[email].access);
+
+    // The executive moves them up, which is what the form now actually sends.
+    await Backend.enrol({
+      email: email, full_name: 'Helper One', position: 'Senator',
+      unit_id: NAT, access: 'officer', eventIds: []
+    });
+    check('the account says officer afterwards',
+      SB.enrolments[email].access === 'officer', SB.enrolments[email].access);
+    check('and in the National government',
+      SB.enrolments[email].unit_id === NAT);
+
+    /* And when they open the app they are one. This is the part that was
+       failing on a real phone: the account changed and the screens did not. */
+    SB.users[email] = { id: 'u-helper', password: 'helperpass', email: email };
+    claimEnrolment(SB.users[email]);
+    await Auth.signOut();
+    const who = await Auth.signIn(email, 'helperpass');
+    check('they are greeted as an officer, not a volunteer',
+      !!who && !Auth.isVolunteer(), 'still the volunteer interface');
+    /* The profile carries the National unit. myUnitId() maps that onto the unit
+       this device knows, and this suite never syncs, so it lands on the local
+       National one — which is the same place. What matters is that the app now
+       treats them as national rather than as a college's helper. */
+    check('and the app treats them as national', Auth.isNational(),
+      'the account says officer but the app does not see a national officer');
+
+    /* Somebody already signed in when the change is made. The app used to read
+       this once, at sign-in, so they kept the old screens until they thought to
+       close the tab — with nothing suggesting they should. */
+    SB.profiles['u-helper'].access = 'volunteer';
+    const changed = await Auth.refresh();
+    check('a change made while they are signed in is noticed', changed === true);
+    check('and takes effect without closing the tab', Auth.isVolunteer());
+
+    SB.profiles['u-helper'].access = 'officer';
+    check('and back again', (await Auth.refresh()) === true && !Auth.isVolunteer());
+    await Auth.signOut();
+  }
+
   /* ---------------- leaving a shared computer ----------------
      A council runs on the library PC and the org room laptop. Signing out has
      to take the council's work with it, or the next person to sign in opens the
