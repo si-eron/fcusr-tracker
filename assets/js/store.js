@@ -559,6 +559,12 @@
       l.stops.forEach(function (st) { st.officeId = to(st.officeId); });
     });
     state.people.forEach(function (p) { p.unitId = to(p.unitId); });
+    /* Directives too. A directive carries a unit of its own, because it has no
+       activity to read one through — and that field was added without being
+       added here, so it kept the id this device invented while everything around
+       it moved to the server's. Pushing one then broke the foreign key, and the
+       whole round with it. */
+    state.tasks.forEach(function (t) { if (t.unitId) t.unitId = to(t.unitId); });
     commit();
     return true;
   }

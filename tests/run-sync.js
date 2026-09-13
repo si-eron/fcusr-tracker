@@ -133,6 +133,21 @@ function makeServer() {
     upsert(table, rows) {
       this.requests.push({ op: 'upsert', table, n: rows.length });
 
+      /* The foreign key on tasks.unit_id. A directive written before this device
+         adopted the server's unit ids carries an id the server has no row for,
+         and offering it back takes the whole round down. */
+      if (this.refuseWrite !== null) {
+        for (const r of rows) {
+          if (table !== 'tasks' || !r.unit_id) continue;
+          if (!tables.units[r.unit_id]) {
+            const e = new Error('insert or update on table "tasks" violates foreign key ' +
+              'constraint "tasks_unit_id_fkey"');
+            e.status = 409;
+            return Promise.reject(e);
+          }
+        }
+      }
+
       /* NOT NULL, which the real schema has on tasks.event_id and this stand-in
          did not. A directive is a task belonging to no activity, so every one of
          them was refused by the database and accepted here — and directives
@@ -1553,6 +1568,39 @@ function makeDevice(server, name) {
       quiet.last && quiet.last.sent === 0 &&
       (quiet.last.added + quiet.last.updated) === 0,
       quiet.last && JSON.stringify(quiet.last));
+  }
+
+  /* ---------------- a directive written before the ids settled ----------------
+     A directive carries a unit of its own, because it has no activity to read
+     one through. A device seeds its colleges under ids it invented and adopts
+     the server's on the first sync — and that new field was added without being
+     added to the remapping, so a directive kept the invented id while everything
+     around it moved on.
+
+     Offering that back is a foreign key violation, and it takes the whole round
+     with it: "Not synced", nothing sent, on a phone that had done nothing wrong. */
+  console.log('\n--- a directive written before the ids settled ---');
+  {
+    const sFk = makeServer();
+    const P4 = makeDevice(sFk, 'President');
+
+    // Written while this device still called its National unit by its own name.
+    const dir = P4.S.addTask({ kind: 'directive', title: 'BOT Meeting' });
+    P4.S.updateTask(dir.id, { remarks: '' });
+    const local = P4.S.task(dir.id).unitId;
+    check('it carries a unit id', !!local, local);
+
+    const st = await P4.Sync.now();
+    check('the round does not fault', !st.error, st.error);
+    check('and the directive reached the server', !!sFk.tables.tasks[dir.id],
+      'the foreign key refused it');
+    check('under an id the server actually has',
+      !!sFk.tables.units[sFk.tables.tasks[dir.id].unit_id],
+      sFk.tables.tasks[dir.id] && sFk.tables.tasks[dir.id].unit_id);
+
+    // And the local record is moved onto the server's id, not left behind.
+    check('the phone now calls it by the server\u2019s id too',
+      P4.w.U.isUuid(P4.S.task(dir.id).unitId), P4.S.task(dir.id).unitId);
   }
 
   console.log('\n--- no console errors ---');

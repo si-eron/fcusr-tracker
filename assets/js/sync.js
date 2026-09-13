@@ -85,8 +85,14 @@
        activity sends no unit and is scoped through the activity, as ever. */
     if (kind === 'task')   {
       row.event_id = rec.eventId || null;
+      /* Only an id the server could possibly know. A directive written before
+         this device adopted the server's unit ids carries one of its own, and
+         offering that back is a foreign key violation that takes the whole
+         round down with it. */
+      var own = rec.unitId && U.isUuid(rec.unitId) ? rec.unitId : '';
+      var mine = (global.Auth && Auth.myUnitId && Auth.myUnitId()) || '';
       row.unit_id = rec.eventId ? null
-        : (rec.unitId || (global.Auth && Auth.myUnitId && Auth.myUnitId()) || null);
+        : (own || (U.isUuid(mine) ? mine : null));
       row.title = rec.title || '';
       row.status = rec.status || 'Not Started';
     }
