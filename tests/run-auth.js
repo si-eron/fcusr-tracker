@@ -874,6 +874,50 @@ const FILES = [
     await Auth.signOut();
   }
 
+  /* ---------------- a college officer is not a national one ----------------
+     A Governor assigning a task was offered the National government's roster.
+
+     Their profile names their college by the server's id. A device seeds its
+     colleges under ids of its own and only adopts the server's on the first
+     completed sync — so until that moment Store.unit() did not recognise the id
+     in their profile, and myUnitId() fell back to the National unit. Every
+     scoped list then answered as though they were national. If the remap never
+     happened it was not a moment, it was permanent.
+
+     A fallback that widens what somebody can reach is the wrong way round. */
+  console.log('\n--- a unit this device has not heard of yet ---');
+  {
+    await Auth.signOut();
+    SB.users['gov@filamer.edu.ph'] = { id: 'u-gov', password: 'govpass', email: 'gov@filamer.edu.ph' };
+    SB.enrolments['gov@filamer.edu.ph'] = {
+      email: 'gov@filamer.edu.ph', full_name: 'Governor One', position: 'Governor',
+      unit_id: CN, access: 'officer', event_ids: []
+    };
+    claimEnrolment(SB.users['gov@filamer.edu.ph']);
+    await Auth.signIn('gov@filamer.edu.ph', 'govpass');
+
+    // The state of a phone that has signed in but not yet finished a sync: the
+    // server's id for their college means nothing to it.
+    const known = !!window.Store.unit(CN);
+    check('the device does not know that unit yet', !known,
+      'the fixture no longer reproduces the case');
+    check('they are still filed under their own college, not the Republic',
+      Auth.myUnitId() === CN, Auth.myUnitId());
+    check('and the app does not mistake them for a national officer',
+      !Auth.isNational(), 'a college officer is being treated as national');
+
+    /* Which is what decides the roster they are offered. An id this device does
+       not know matches nobody — empty, and truthful — rather than handing over
+       the National government's people. */
+    const pool = window.Store.assignable('');
+    const nationals = window.Store.people({ unitId: window.Store.nationalUnitId() });
+    check('and is not offered the National roster',
+      !pool.some((p) => nationals.some((n) => n.id === p.id)),
+      pool.length + ' people offered, including nationals');
+
+    await Auth.signOut();
+  }
+
   /* ---------------- leaving a shared computer ----------------
      A council runs on the library PC and the org room laptop. Signing out has
      to take the council's work with it, or the next person to sign in opens the

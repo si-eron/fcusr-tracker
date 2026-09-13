@@ -70,7 +70,26 @@
      carries no unit, and the only unit that existed then was the National one. */
   function myUnitId() {
     if (!me) return '';
-    if (me.unitId && Store.unit(me.unitId)) return me.unitId;
+
+    /* Their unit, whether or not this device has heard of it yet.
+
+       This used to fall back to the National unit when Store.unit() did not
+       recognise the id — and it does not recognise it for a while. A device
+       seeds its colleges under ids of its own and only adopts the server's on
+       the first completed sync, so between signing in and that moment a college
+       officer was being treated as a national one. Every scoped list then
+       offered them the National government's roster, which is exactly what a
+       Governor reported seeing when assigning a task. If the remap never
+       happened, it was not a moment; it was permanent.
+
+       A fallback that widens what somebody can reach is the wrong way round.
+       An id this device does not know yet matches nothing, so the lists come
+       back empty until the first sync fills them in — which is the truthful
+       answer and the safe one. */
+    if (me.unitId) return me.unitId;
+
+    // No unit named at all: a session saved before units existed, and the only
+    // unit that existed then was the National one.
     return Store.nationalUnitId();
   }
 
