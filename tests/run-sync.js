@@ -37,7 +37,7 @@ const FILES = [
 const COLUMNS = {
   people:    ['id', 'unit_id', 'name', 'active', 'body', 'updated_at'],
   events:    ['id', 'unit_id', 'title', 'status', 'body', 'updated_at'],
-  tasks:     ['id', 'event_id', 'title', 'status', 'body', 'updated_at'],
+  tasks:     ['id', 'event_id', 'unit_id', 'title', 'status', 'body', 'updated_at'],
   reports:   ['id', 'event_id', 'drive_link', 'drive_owned', 'status', 'body', 'updated_at'],
   letters:   ['id', 'unit_id', 'subject', 'status', 'stops', 'internal', 'body', 'updated_at'],
   offices:   ['id', 'code', 'name', 'active', 'body', 'updated_at'],
@@ -132,6 +132,26 @@ function makeServer() {
     },
     upsert(table, rows) {
       this.requests.push({ op: 'upsert', table, n: rows.length });
+
+      /* NOT NULL, which the real schema has on tasks.event_id and this stand-in
+         did not. A directive is a task belonging to no activity, so every one of
+         them was refused by the database and accepted here — and directives
+         quietly never synced at all while every test said they did. */
+      for (const r of rows) {
+        for (const [t, col] of [['tasks', 'event_id'], ['reports', 'event_id'],
+                                ['events', 'unit_id']]) {
+          if (table !== t) continue;
+          // directives.sql drops NOT NULL on tasks.event_id; a task must still
+          // say which unit it belongs to, by its activity or by itself.
+          if (t === 'tasks' && col === 'event_id' && r.unit_id) continue;
+          if (r[col] === null || r[col] === undefined) {
+            const e = new Error('null value in column "' + col + '" of relation "' +
+              t + '" violates not-null constraint');
+            e.status = 400;
+            return Promise.reject(e);
+          }
+        }
+      }
 
       /* Row-level security refuses writes, and refuses them for the whole
          request — PostgREST does not write the rows it likes and skip the rest.
@@ -1418,6 +1438,121 @@ function makeDevice(server, name) {
       .filter((r) => r.op === 'upsert' && r.table === 'deletions').length;
     check('and it stops offering the refused tombstone', singles === 0,
       singles + ' further offers of a tombstone already refused');
+  }
+
+  /* ---------------- directives ----------------
+     A directive is council business that belongs to no activity — a standing
+     instruction, its own tab in the app. It is stored as a task with no event,
+     and tasks.event_id is NOT NULL on the server. So every directive ever
+     written was refused by the database.
+
+     Before refusals were survivable that broke the whole round; after, it was
+     skipped in silence. Either way no directive has ever reached a second
+     phone, and the tab has quietly been a private notebook on each device. */
+  console.log('\n--- a directive reaches the other phones ---');
+  {
+    const sDir = makeServer();
+    const One = makeDevice(sDir, 'President');
+    const Two = makeDevice(sDir, 'Governor');
+
+    const dir = One.S.addTask({
+      kind: 'directive', title: 'File every report before the sixth',
+      dueDate: '2026-10-01', priority: 'High'
+    });
+    check('it is a task with no activity behind it',
+      dir.kind === 'directive' && !dir.eventId, dir.kind + '/' + dir.eventId);
+
+    const st = await One.Sync.now();
+    check('the round does not fault', !st.error, st.error);
+    check('and the directive was actually sent',
+      !!sDir.tables.tasks[dir.id], 'the server never got it');
+
+    for (let i = 0; i < 2; i++) for (const d of [One, Two]) await d.Sync.now();
+    const there = Two.S.task(dir.id);
+    check('the other phone has it', !!there, 'directives do not travel');
+    check('and it is still a directive there',
+      there && there.kind === 'directive' && !there.eventId,
+      there && there.kind);
+    check('with what it said', there && there.title === 'File every report before the sixth');
+
+    // Editing one travels too.
+    One.S.updateTask(dir.id, { status: 'In Progress' });
+    for (let i = 0; i < 2; i++) for (const d of [One, Two]) await d.Sync.now();
+    check('and a change to it travels', Two.S.task(dir.id).status === 'In Progress',
+      Two.S.task(dir.id) && Two.S.task(dir.id).status);
+  }
+
+  /* ---------------- every tab, not just the ones we remembered ----------------
+     Directives never synced. Nobody noticed for a term, because every test wrote
+     an activity, a task inside it, a letter and a report — and directives are
+     none of those, so the one kind of record that could not be stored was the
+     one kind nothing tried to store.
+
+     This walks the whole app instead: one of everything a tab can create, made
+     on one phone, checked on another. A record type added later that nobody
+     wires into sync fails here rather than in somebody's term. */
+  console.log('\n--- one of everything reaches the other phone ---');
+  {
+    const sAll = makeServer();
+    const A3 = makeDevice(sAll, 'President');
+    const B3 = makeDevice(sAll, 'Governor');
+    const unit = A3.S.nationalUnitId();
+
+    // Overview / Events tab
+    const ev = A3.S.addEvent({ title: 'General Assembly', unitId: unit,
+      dateStart: '2026-10-01', venue: 'Gymnasium' });
+    // My tasks tab
+    const person = A3.S.addPerson({ name: 'Solis, Rhea', unitId: unit, position: 'Senator' });
+    const task = A3.S.addTask({ kind: 'event', eventId: ev.id, title: 'Book the hall',
+      assigneeId: person.id, dueDate: '2026-09-20' });
+    // Directives tab
+    const dir = A3.S.addTask({ kind: 'directive', title: 'File before the sixth' });
+    // Letters tab
+    const letter = A3.S.addLetter({ unitId: unit, subject: 'Request for the budget',
+      route: [{ officeId: A3.S.officeByCode('PRES').id }] });
+    // Settings: an office somebody added for a letter
+    const office = A3.S.addOffice({ name: 'Office of the Chaplain', turnaroundDays: 3 });
+    // Settings: the Republic's own details and the closing date
+    A3.S.updateOrg({ address: 'Roxas Avenue, Roxas City, Capiz' });
+    A3.S.declareTerm('2026-10-06', { note: 'End of term.', by: 'Arron D. Aperocho' });
+    // Reports tab
+    const rep = A3.S.saveReport(ev.id, { driveLink: 'https://drive.google.com/x' });
+
+    for (let i = 0; i < 3; i++) for (const d of [A3, B3]) await d.Sync.now();
+
+    const rounds = await B3.Sync.now();
+    check('no round faulted along the way', !rounds.error, rounds.error);
+
+    check('Events: the activity is there', !!B3.S.event(ev.id));
+    check('Events: with its venue', B3.S.event(ev.id).venue === 'Gymnasium');
+    check('People: the officer is there', !!B3.S.person(person.id));
+    check('My tasks: the task is there', !!B3.S.task(task.id));
+    check('My tasks: still held by the same person',
+      B3.S.task(task.id).assigneeId === person.id);
+    check('Directives: the directive is there', !!B3.S.task(dir.id),
+      'the Directives tab does not sync');
+    check('Letters: the letter is there', !!B3.S.letter(letter.id));
+    check('Letters: with its trail', (B3.S.letter(letter.id).stops || []).length > 0);
+    check('Settings: the added office is there',
+      B3.S.offices().some((o) => o.id === office.id), 'offices do not sync');
+    check('Settings: the Republic\u2019s details travel',
+      B3.S.org().address === 'Roxas Avenue, Roxas City, Capiz', B3.S.org().address);
+    check('Settings: the closing date travels',
+      B3.S.termStatus().endDate === '2026-10-06', B3.S.termStatus().endDate);
+    if (rep) {
+      check('Reports: the filed report is there', !!B3.S.report(ev.id),
+        'reports do not sync');
+      check('Reports: with the Drive link',
+        (B3.S.report(ev.id) || {}).driveLink === 'https://drive.google.com/x');
+    }
+
+    /* And the whole thing settles: a further round on a device that already
+       agrees must send nothing and take nothing. */
+    const quiet = await B3.Sync.now();
+    check('and it settles rather than churning',
+      quiet.last && quiet.last.sent === 0 &&
+      (quiet.last.added + quiet.last.updated) === 0,
+      quiet.last && JSON.stringify(quiet.last));
   }
 
   console.log('\n--- no console errors ---');

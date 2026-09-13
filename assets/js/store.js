@@ -404,6 +404,7 @@
     return {
       id: id(t.id, 'tsk'),
       kind: oneOf(t.kind, ['event', 'directive'], 'event'),
+      unitId: id(t.unitId),
       eventId: typeof t.eventId === 'string' ? t.eventId : '',
       title: title,
       remarks: str(t.remarks, LIMITS.text),
@@ -1720,6 +1721,12 @@
       id: U.uid('tsk'),
       kind: isDirective ? 'directive' : 'event',
       eventId: isDirective ? '' : data.eventId,
+      /* A directive has no activity, so it has nothing to be scoped by unless it
+         carries a unit of its own. Everything else reads its unit through the
+         activity it sits in, and keeps doing so. */
+      unitId: isDirective
+        ? (data.unitId || (global.Auth && Auth.signedIn() && Auth.myUnitId()) || nationalUnitId())
+        : '',
       title: (data.title || '').trim(),
       remarks: (data.remarks || '').trim(),
       assigneeId: data.assigneeId || '',

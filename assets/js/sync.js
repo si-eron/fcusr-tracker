@@ -79,7 +79,17 @@
     if (kind === 'unit')   { row.name = rec.name || ''; row.code = rec.code || null; row.kind = rec.kind || 'province'; row.tracker_name = rec.trackerName || ''; row.active = rec.active !== false; }
     if (kind === 'person') { row.unit_id = u; row.name = rec.name || ''; row.active = rec.active !== false; }
     if (kind === 'event')  { row.unit_id = u; row.title = rec.title || ''; row.status = rec.status || 'Upcoming'; }
-    if (kind === 'task')   { row.event_id = rec.eventId || null; row.title = rec.title || ''; row.status = rec.status || 'Not Started'; }
+    /* A directive has no activity, so it carries its own unit — otherwise the
+       server has nothing to decide who may read it by, and until event_id was
+       allowed to be empty it could not be stored at all. A task inside an
+       activity sends no unit and is scoped through the activity, as ever. */
+    if (kind === 'task')   {
+      row.event_id = rec.eventId || null;
+      row.unit_id = rec.eventId ? null
+        : (rec.unitId || (global.Auth && Auth.myUnitId && Auth.myUnitId()) || null);
+      row.title = rec.title || '';
+      row.status = rec.status || 'Not Started';
+    }
     if (kind === 'report') { row.event_id = rec.eventId || null; row.drive_link = rec.driveLink || ''; row.drive_owned = !!rec.driveOwned; row.status = rec.status || 'draft'; }
     if (kind === 'letter') { row.unit_id = u; row.subject = rec.subject || ''; row.status = rec.status || 'Routing'; row.stops = rec.stops || []; row.internal = !!rec.internal; }
     if (kind === 'office') { row.name = rec.name || ''; row.code = rec.code || null; row.active = rec.active !== false; }
